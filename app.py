@@ -69,7 +69,7 @@ def download():
                 
                 ydl.download([url])
 
-            yield "\nZipping files... this might take a moment.\n"
+            yield "\nProcessing files...\n"
             
             # Check if files were downloaded
             files_in_dir = os.listdir(temp_dir)
@@ -77,31 +77,89 @@ def download():
                 yield "❌ No files were downloaded. Please check the URL.\n"
                 return
             
-            yield f"Found {len(files_in_dir)} files to zip.\n"
+            yield f"Found {len(files_in_dir)} files.\n"
             
-            zip_path = os.path.join('temp', f"{download_id}.zip")
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # ✨ CHANGED: Zip any audio file, not just .mp3
-                for file in files_in_dir:
-                    file_path = os.path.join(temp_dir, file)
-                    if os.path.isfile(file_path):
-                        zipf.write(file_path, arcname=file)
-                        yield f"Zipped: {file}\n"
-
-            # Verify zip was created
-            if os.path.exists(zip_path):
-                zip_size = os.path.getsize(zip_path)
-                yield f"\n✅ Zip file created successfully ({zip_size} bytes).\n"
+            # ✨ NEW: Handle single video vs playlist differently
+            if total == 1:
+                # Single video - no zip needed
+                file_name = files_in_dir[0]
+                file_path = os.path.join(temp_dir, file_name)
+                if os.path.isfile(file_path):
+                    file_size = os.path.getsize(file_path)
+                    yield f"✅ Single video ready: {file_name} ({file_size} bytes)\n"
+                    yield f"SINGLE_FILE:{download_id}:{file_name}\n"
+                else:
+                    yield "❌ File not found after download.\n"
             else:
-                yield "\n❌ Failed to create zip file.\n"
+                # Multiple videos - create zip
+                yield "Creating ZIP file for playlist...\n"
+                zip_path = os.path.join('temp', f"{download_id}.zip")
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for file in files_in_dir:
+                        file_path = os.path.join(temp_dir, file)
+                        if os.path.isfile(file_path):
+                            zipf.write(file_path, arcname=file)
+                            yield f"Zipped: {file}\n"
+
+                # Verify zip was created
+                if os.path.exists(zip_path):
+                    zip_size = os.path.getsize(zip_path)
+                    yield f"\n✅ ZIP file created successfully ({zip_size} bytes).\n"
+                    yield f"ALL_DONE:{download_id}\n"
+                else:
+                    yield "\n❌ Failed to create ZIP file.\n"
 
         except Exception as e:
             logging.error(f"Error during download/zip for {download_id}: {e}")
             yield f"💥 An unexpected error occurred: {e}\n"
         finally:
-            yield f"ALL_DONE:{download_id}\n"
+            if total > 1:  # Only send ALL_DONE for playlists
+                yield f"ALL_DONE:{download_id}\n"
 
     return Response(stream_with_context(generate_and_download()), mimetype='text/plain')
+
+
+@app.route('/get_file/<download_id>/<filename>')
+def get_file(download_id, filename):
+    if not all(c in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in download_id):
+        return jsonify({'error': 'Invalid download ID'}), 400
+
+    file_path = os.path.join('temp', download_id, filename)
+    temp_dir = os.path.join('temp', download_id)
+
+    # Add logging
+    logging.info(f"Requesting single file: {filename} for ID: {download_id}")
+    logging.info(f"File path: {file_path}")
+    logging.info(f"File exists: {os.path.exists(file_path)}")
+    
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'File not found or already deleted.'}), 404
+        
+    def stream_and_cleanup():
+        try:
+            with open(file_path, 'rb') as f:
+                yield from f
+        finally:
+            # Add delay before cleanup to ensure download completes
+            time.sleep(1)
+            logging.info(f"Cleaning up single file: {file_path} and {temp_dir}")
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            except OSError as e:
+                logging.error(f"Error during cleanup: {e}")
+
+    # Determine MIME type based on file extension
+    if filename.lower().endswith('.mp3'):
+        mime_type = 'audio/mpeg'
+    elif filename.lower().endswith('.m4a'):
+        mime_type = 'audio/mp4'
+    else:
+        mime_type = 'audio/mpeg'  # default
+
+    response = Response(stream_and_cleanup(), mimetype=mime_type)
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
 
 
 @app.route('/get_zip/<download_id>')

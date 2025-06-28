@@ -10,7 +10,7 @@
 
   <div class="max-w-xl w-full bg-gray-800 rounded-lg shadow-lg p-8 space-y-4">
     <h1 class="text-3xl font-bold text-center text-white">YouTube Playlist Downloader</h1>
-    <p class="text-center text-gray-400 text-sm">Paste a YouTube video or playlist URL to get a ZIP of audio files.</p>
+    <p class="text-center text-gray-400 text-sm">Paste a YouTube video or playlist URL to get audio files.</p>
 
     <form id="downloadForm" class="space-y-4">
       <input
@@ -89,12 +89,34 @@
 
           const chunk = decoder.decode(value, { stream: true });
           
-          if (chunk.includes('ALL_DONE:')) {
+          // ✨ NEW: Handle single file downloads
+          if (chunk.includes('SINGLE_FILE:')) {
+            const match = chunk.match(/SINGLE_FILE:([a-f0-9\-]+):(.+)/);
+            if (match && match[1] && match[2]) {
+              const downloadId = match[1].trim();
+              const filename = match[2].trim();
+              logBox.textContent += chunk.substring(0, match.index);
+              statusEl.textContent = 'Status: Single file ready. Starting download...';
+              
+              // Download single file directly
+              window.location.href = `/get_file/${downloadId}/${encodeURIComponent(filename)}`;
+
+              setTimeout(() => {
+                  statusEl.textContent = 'Status: Download started! Waiting for new URL.';
+                  submitButton.disabled = false;
+                  submitButton.textContent = 'Start Download';
+                  urlInput.value = '';
+              }, 2000);
+            }
+            break;
+          }
+          // Handle ZIP downloads (playlists)
+          else if (chunk.includes('ALL_DONE:')) {
             const match = chunk.match(/ALL_DONE:([a-f0-9\-]+)/);
             if (match && match[1]) {
               const zipId = match[1].trim();
               logBox.textContent += chunk.substring(0, match.index);
-              statusEl.textContent = 'Status: Zipping complete. Preparing download...';
+              statusEl.textContent = 'Status: ZIP ready. Starting download...';
               window.location.href = `/get_zip/${zipId}`;
 
               setTimeout(() => {
