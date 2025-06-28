@@ -6,6 +6,7 @@ import os
 import uuid
 import shutil
 import logging
+import time
 
 logging.basicConfig(level=logging.INFO)
 
@@ -70,15 +71,29 @@ def download():
 
             yield "\nZipping files... this might take a moment.\n"
             
+            # Check if files were downloaded
+            files_in_dir = os.listdir(temp_dir)
+            if not files_in_dir:
+                yield "❌ No files were downloaded. Please check the URL.\n"
+                return
+            
+            yield f"Found {len(files_in_dir)} files to zip.\n"
+            
             zip_path = os.path.join('temp', f"{download_id}.zip")
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 # ✨ CHANGED: Zip any audio file, not just .mp3
-                for file in os.listdir(temp_dir):
-                    # This is more robust and zips whatever yt-dlp created
-                    zipf.write(os.path.join(temp_dir, file), arcname=file)
-                    yield f"Zipped: {file}\n"
+                for file in files_in_dir:
+                    file_path = os.path.join(temp_dir, file)
+                    if os.path.isfile(file_path):
+                        zipf.write(file_path, arcname=file)
+                        yield f"Zipped: {file}\n"
 
-            yield f"\nZip file created successfully.\n"
+            # Verify zip was created
+            if os.path.exists(zip_path):
+                zip_size = os.path.getsize(zip_path)
+                yield f"\n✅ Zip file created successfully ({zip_size} bytes).\n"
+            else:
+                yield "\n❌ Failed to create zip file.\n"
 
         except Exception as e:
             logging.error(f"Error during download/zip for {download_id}: {e}")
@@ -97,7 +112,18 @@ def get_zip(download_id):
     zip_path = os.path.join('temp', f"{download_id}.zip")
     temp_dir = os.path.join('temp', download_id)
 
+    # Add more detailed logging
+    logging.info(f"Requesting zip for ID: {download_id}")
+    logging.info(f"Zip path: {zip_path}")
+    logging.info(f"Zip exists: {os.path.exists(zip_path)}")
+    
     if not os.path.exists(zip_path):
+        # Check if temp directory exists
+        if os.path.exists(temp_dir):
+            files_in_temp = os.listdir(temp_dir)
+            logging.info(f"Temp dir exists with files: {files_in_temp}")
+        else:
+            logging.info("Temp directory does not exist")
         return jsonify({'error': 'File not found or already deleted.'}), 404
         
     def stream_and_cleanup():
@@ -105,10 +131,14 @@ def get_zip(download_id):
             with open(zip_path, 'rb') as f:
                 yield from f
         finally:
+            # Add delay before cleanup to ensure download completes
+            time.sleep(1)
             logging.info(f"Cleaning up {zip_path} and {temp_dir}")
             try:
-                os.remove(zip_path)
-                shutil.rmtree(temp_dir)
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
             except OSError as e:
                 logging.error(f"Error during cleanup: {e}")
 
