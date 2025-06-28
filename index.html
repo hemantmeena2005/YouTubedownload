@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YouTube Playlist to MP3/M4A</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-6">
+
+  <div class="max-w-xl w-full bg-gray-800 rounded-lg shadow-lg p-8 space-y-4">
+    <h1 class="text-3xl font-bold text-center text-white">YouTube Playlist Downloader</h1>
+    <p class="text-center text-gray-400 text-sm">Paste a YouTube video or playlist URL to get a ZIP of audio files.</p>
+
+    <form id="downloadForm" class="space-y-4">
+      <input
+        type="text"
+        id="playlistUrl"
+        placeholder="Paste YouTube playlist or video URL"
+        required
+        class="w-full px-4 py-3 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      />
+      
+      <select id="format" class="w-full px-4 py-3 rounded bg-gray-700 border border-gray-600 text-white">
+        <option value="m4a">Fastest (M4A format - Recommended)</option>
+        <option value="mp3">Compatible (MP3 format - Slower)</option>
+      </select>
+      
+      <button
+        type="submit"
+        id="submitButton"
+        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded transition flex items-center justify-center disabled:bg-indigo-400"
+      >
+        Start Download
+      </button>
+    </form>
+
+    <div class="mt-4">
+      <p id="status" class="text-sm font-mono mb-2">Status: Waiting for URL</p>
+      <div class="h-48 overflow-y-auto bg-black p-3 rounded text-green-400 text-xs font-mono" id="logBox"></div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('downloadForm');
+    const urlInput = document.getElementById('playlistUrl');
+    const submitButton = document.getElementById('submitButton');
+    const statusEl = document.getElementById('status');
+    const logBox = document.getElementById('logBox');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const url = urlInput.value.trim();
+      // ✨ CHANGED: We now get the format instead of quality
+      const format = document.getElementById('format').value;
+
+      if (!url) return;
+
+      submitButton.disabled = true;
+      submitButton.textContent = 'Working on it...';
+      statusEl.textContent = 'Status: Contacting server...';
+      logBox.textContent = '';
+
+      try {
+        const response = await fetch('/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // ✨ CHANGED: Send the chosen format to the backend
+          body: JSON.stringify({ url, format }),
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Server returned an error.');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        statusEl.textContent = 'Status: Receiving logs...';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+             statusEl.textContent = 'Status: Stream ended unexpectedly.';
+             break;
+          }
+
+          const chunk = decoder.decode(value, { stream: true });
+          
+          if (chunk.includes('ALL_DONE:')) {
+            const match = chunk.match(/ALL_DONE:([a-f0-9\-]+)/);
+            if (match && match[1]) {
+              const zipId = match[1].trim();
+              logBox.textContent += chunk.substring(0, match.index);
+              statusEl.textContent = 'Status: Zipping complete. Preparing download...';
+              window.location.href = `/get_zip/${zipId}`;
+
+              setTimeout(() => {
+                  statusEl.textContent = 'Status: Download started! Waiting for new URL.';
+                  submitButton.disabled = false;
+                  submitButton.textContent = 'Start Download';
+                  urlInput.value = '';
+              }, 2000);
+            }
+            break;
+          } else {
+            logBox.textContent += chunk;
+            logBox.scrollTop = logBox.scrollHeight;
+          }
+        }
+
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Status: Error - ${err.message}`;
+        logBox.textContent += `\n💥 Request failed. Check console for details.`;
+        submitButton.disabled = false;
+        submitButton.textContent = 'Start Download';
+      }
+    });
+  </script>
+
+</body>
+</html>
